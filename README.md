@@ -46,6 +46,49 @@ Exit codes: `0` nothing at or above the threshold, `1` findings, `2` usage error
 `--fail-on` defaults to `high`, so a `PUT` that writes without a guard reports and exits 0
 until you ask otherwise.
 
+## The runtime: stop the second charge, not just report it
+
+The linter tells you which handlers are undefended. `idemcheck.runtime` defends them.
+
+```python
+from idemcheck.runtime import SQLiteStore, idempotent
+
+store = SQLiteStore("idempotency.db")
+
+@idempotent(store=store)
+def charge_card(amount, idempotency_key=None):
+    gateway.charge(amount)                       # runs once per key, ever
+    return {"charged": amount}
+```
+
+```
+$ python examples/runtime_demo.py
+first:   {'charged': 2500, 'key': 'order-41'}
+retry:   {'charged': 2500, 'key': 'order-41'}
+charges that reached the gateway: []
+```
+
+Four outcomes, and they are genuinely different:
+
+| Situation | What happens |
+|---|---|
+| the key is new | the function runs, and the result is stored |
+| the key completed already | the stored result is returned, nothing runs |
+| the key is in flight | `IdempotencyConflict`, rather than a second charge |
+| the key came back with a different payload | `IdempotencyMismatch`, because a key identifies one operation |
+
+A failure is never remembered: if the function raises, the key is released so the retry can
+work. Caching an exception would make a transient gateway timeout permanent.
+
+Two stores ship: `MemoryStore` for tests and single workers, `SQLiteStore` for anything that
+has to survive a restart, shared by every worker that opens the same file. The claim is one
+atomic insert, so two workers racing on one key produce one winner and one conflict, which
+`tests/test_runtime.py` proves with two real threads. Async handlers work the same way, and
+`current_idempotency_key()` gives you the key of the call in progress for logs and audit.
+
+`on_conflict="raise"` is the default. `"wait"` blocks for the in-flight call and replays it;
+`"run"` lets the work through, which is only right when repeating it is already harmless.
+
 ## What it looks for
 
 A handler is a finding when it answers a mutating method **and** calls something that
@@ -85,7 +128,7 @@ The clean line is exactly what it says: no unguarded write was **recognised**.
 ## Tests
 
 ```bash
-python -m pytest -q      # 19 tests
+python -m pytest -q      # 33 tests
 bash scripts/verify.sh   # the release gate
 ```
 
