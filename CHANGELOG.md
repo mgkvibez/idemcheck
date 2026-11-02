@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.3.0 - 2026-11-02
+
+- New module: `idemcheck.adapters`. `IdempotencyMiddleware` (ASGI: FastAPI, Starlette) and
+  `WSGIMiddleware` (Flask, Django) read the `Idempotency-Key` header, run the app once, store the
+  status, headers and body, and replay that response for every later delivery with
+  `Idempotency-Replayed: true`.
+- In-flight duplicate answers `409 idempotency_conflict`; the same key with a different body
+  answers `422 idempotency_mismatch`. Neither reaches the handler.
+- Only `POST` is intercepted by default; unhandled methods pass straight through with no
+  buffering, so streaming and SSE endpoints are untouched.
+- A body over `max_body` passes through intact but unprotected. The first cut read the body and
+  then tried to pass through, which would have delivered a half-consumed request; the oversized
+  path now chains the buffered prefix to the live stream.
+- A 5xx or 429 releases the key rather than storing the error, so the retry actually retries.
+  A 4xx is stored: it is a final answer for that payload.
+- Neither middleware imports a framework, so nothing here pins FastAPI, Flask or Django.
+- 18 new tests (51 total) driving bare ASGI and WSGI apps, so the suite needs no framework
+  installed to prove the mechanics.
+
 ## v0.2.0 - 2026-11-02
 
 - New module: `idemcheck.runtime`. `@idempotent(store=...)` runs a function once per key and

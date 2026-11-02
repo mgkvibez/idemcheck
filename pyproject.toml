@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "idemcheck"
-version = "0.2.0"
+version = "0.3.0"
 description = "Find the HTTP handlers that will double-charge when a client retries."
 readme = "README.md"
 requires-python = ">=3.9"

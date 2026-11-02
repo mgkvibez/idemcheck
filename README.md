@@ -89,6 +89,54 @@ atomic insert, so two workers racing on one key produce one winner and one confl
 `on_conflict="raise"` is the default. `"wait"` blocks for the in-flight call and replays it;
 `"run"` lets the work through, which is only right when repeating it is already harmless.
 
+## Middleware: the header, not a changed signature
+
+The runtime needs the key passed to the function. A real app receives it as a header and will
+not rewrite every handler, so `idemcheck.adapters` does the mechanics for you.
+
+```python
+from idemcheck.adapters import IdempotencyMiddleware
+from idemcheck.runtime import SQLiteStore
+
+app.add_middleware(IdempotencyMiddleware, store=SQLiteStore("idempotency.db"))
+```
+
+```python
+# Flask, or anything WSGI
+from idemcheck.adapters import WSGIMiddleware
+
+app.wsgi_app = WSGIMiddleware(app.wsgi_app, store=store)
+```
+
+```
+$ python examples/adapter_demo.py
+delivery 1: 201 {"charged": 2500}  replayed=False
+delivery 2: 201 {"charged": 2500}  replayed=True
+times the gateway was charged: 1
+```
+
+What the middleware does with each delivery of an `Idempotency-Key`:
+
+| Situation | Response |
+|---|---|
+| no header, `require_key=False` | passes through untouched, nothing stored |
+| first delivery | runs the app, stores the status, headers and body |
+| duplicate of a completed call | the stored response, plus `Idempotency-Replayed: true` |
+| another call is still in flight | `409 idempotency_conflict`, the handler never runs |
+| same key, different body | `422 idempotency_mismatch` |
+| the app answered 5xx or 429 | key released, nothing stored, so the retry really retries |
+
+Neither middleware imports FastAPI, Starlette, Flask or Django, so installing this cannot pin a
+version of one. Three behaviours are deliberate rather than incidental:
+
+* only `POST` is intercepted by default (`methods=(...)` to change it), and anything unhandled
+  is passed straight to the app without its response being buffered, so SSE and streaming
+  endpoints behave exactly as before
+* a body over `max_body` (1 MB) is passed through **intact but unprotected**, rather than
+  silently swallowed, because a request the app never sees is worse than an unprotected one
+* a 5xx or 429 releases the key instead of storing it. Caching a server error turns a transient
+  failure into a permanent one, which is the opposite of what a retry is for
+
 ## What it looks for
 
 A handler is a finding when it answers a mutating method **and** calls something that
@@ -128,7 +176,7 @@ The clean line is exactly what it says: no unguarded write was **recognised**.
 ## Tests
 
 ```bash
-python -m pytest -q      # 33 tests
+python -m pytest -q      # 51 tests
 bash scripts/verify.sh   # the release gate
 ```
 
