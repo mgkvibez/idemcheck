@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install -e ".[dev]"
+      - name: Release gate (install, tests, CLI smoke)
+        run: bash scripts/verify.sh
+      - name: Self-check a dangerous migration
+        run: |
+          printf "SET lock_timeout='1s';\nALTER TABLE users ADD COLUMN a timestamptz DEFAULT now();\n" > /tmp/demo.sql
+          python -m idemcheck.cli check /tmp/demo.sql --fail-on high || true
